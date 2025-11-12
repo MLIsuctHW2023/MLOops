@@ -1,42 +1,70 @@
-from datetime import timedelta
+from datetime import datetime
 
 from airflow import DAG
-from airflow.models import Variable
-from airflow.operators.python import PythonVirtualenvOperator
-from airflow.utils.dates import days_ago
+from airflow.utils import trigger_rule
+from airflow.operators.python import PythonOperator
+from airflow.providers.amazon.aws.operators.s3 import S3CreateBucketOperator
+from airflow.providers.amazon.aws.transfers.local_to_s3 import LocalFilesystemToS3Operator
 
-s3_address = Variable.get("s3_server")
-s3_bucket = Variable.get("data_bucket")
-
-
-def upload_data(data_name, s3_address, s3_bucket):
-    import minio
-
-    client = minio.Minio(
-        s3_address, secure=False, access_key="miniouser", secret_key="minioser"
-    )
-    content = client.get_object(s3_bucket, data_name)
-    with open(data_name, "wb") as fio:
-        fio.write(content.data)
+from src.local_to_s3_with_prefix import LocalFilesystemToS3OperatorWithPrefix
 
 
-default_args = {
-    "owner": "imd",
-    "email": ["imdxdd@gmail.com"],
-    "email_on_failure": True,
-    "email_on_retry": True,
-    "retries": 1,
-    "retry_delay": timedelta(minutes=5),
-}
+def create_random_data(path_to_save: str) -> str:
+    from pathlib import Path
+
+    import numpy as np
+    import pandas as pd
+
+    path_to_file = Path(path_to_save) / "data.csv"
+    path_to_file.parent.mkdir(exist_ok=True, parents=True)
+    days = np.random.randint(0, 10, size=100)
+    ages = np.random.randint(0, 10, size=100)
+    df = pd.DataFrame({"days": days, "ages": ages})
+    df.to_csv(path_to_file, index=False)
+    return str(path_to_file)
+
+
 with DAG(
-    "s3_uploader",
-    default_args=default_args,
-    schedule_interval="0 12 * * 1-5",
-    start_date=days_ago(1),
-):
-    PythonVirtualenvOperator(
-        task_id="upload_data",
-        python_callable=upload_data,
-        op_args=["{{ds}}", s3_address, s3_bucket],
-        requirements=["minio"],
+    "s3_create_bucket",
+    schedule="@once",
+    default_args={
+        "owner": "imdxd",
+    },
+    start_date=datetime(2025, 9, 21, 0, 0, 0),
+    max_active_runs=1,
+    max_active_tasks=3,
+    end_date=None,
+) as dag:
+
+    create_bucket_task = S3CreateBucketOperator(
+        task_id="create_bucket",
+        bucket_name="mlbucket",
+        aws_conn_id="minio_connection",
+        dag=dag,
     )
+
+    create_data = PythonOperator(
+        task_id="create_data",
+        dag=dag,
+        python_callable=create_random_data,
+        op_kwargs={
+            "path_to_save": "/data/raw_data/{{ ds }}"
+        }
+    )
+
+    upload_file_to_s3 = LocalFilesystemToS3OperatorWithPrefix.partial(
+        task_id="upload_files",
+        aws_conn_id="minio_connection",
+        dest_bucket="mlbucket",
+        replace=False,
+        filename=create_data.output,
+        prefix="raw_data/{{ ds }}"
+    ).expand_kwargs(
+        [
+            {"dest_key": "data1.csv"},
+            {"dest_key": "data2.csv"},
+            {"dest_key": "data3.csv"},
+        ]
+    )
+
+    [create_bucket_task, create_data] >> upload_file_to_s3

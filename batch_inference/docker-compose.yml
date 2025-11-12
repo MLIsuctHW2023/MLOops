@@ -34,6 +34,7 @@ x-airflow-common:
     - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
     - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
+    - ${AIRFLOW_PROJ_DIR:-.}/data:/data
   depends_on:
     &airflow-common-depends-on
     redis:
@@ -252,7 +253,7 @@ services:
   minio:
     restart: always
     image: minio/minio@sha256:c8b96517bdf9e133ae722ae4ad25045743087c1ff5098eff3a397a97f845fbf9
-    container_name: mlflow_s3
+    container_name: minio
     ports:
       - "9002:9000"
       - "9003:9001"

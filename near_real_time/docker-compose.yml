@@ -17,10 +17,3 @@ services:
     environment:
       - KAFKA_CLUSTERS_0_BOOTSTRAP_SERVERS=kafka:9092
       - KAFKA_CLUSTERS_0_NAME=mlcluster
-
-  producer:
-    image: demo_producer
-    build: ./kafka_prod
-    restart: always
-    environment:
-      - KAFKA_CLUSTERS_0_BOOTSTRAP_SERVERS=kafka:9093
