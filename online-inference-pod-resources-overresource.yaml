@@ -12,5 +12,5 @@ spec:
         - containerPort: 8090
       resources:
         requests:
-          memory: "2Gi"
+          memory: "20Gi"
           cpu: "1000m"
