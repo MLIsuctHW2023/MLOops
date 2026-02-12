@@ -1,0 +1,104 @@
+version: '3.8'
+
+services:
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password123
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - app-network
+
+  storage-init:
+    build:
+      context: ./storage-init
+      dockerfile: Dockerfile
+    container_name: storage-init
+    environment:
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ACCESS_KEY=admin
+      - MINIO_SECRET_KEY=password123
+      - BUCKET_NAME=codegen
+      - MODELS_BUCKET_NAME=triton-models
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: on-failure:3
+
+  triton-server:
+    image: nvcr.io/nvidia/tritonserver:23.07-py3
+    ports:
+      - "8100:8000"
+      - "8101:8001"
+      - "8102:8002"
+    volumes:
+      - ./codegen-model:/models
+    command: [
+      "tritonserver",
+      "--model-repository=/models",
+      "--strict-model-config=false",
+      "--allow-s3=true",
+      "--s3-endpoint=minio:9000",
+      "--s3-verify-ssl=false",
+      "--s3-use-https=false",
+      "--aws-access-key-id=admin",
+      "--aws-secret-access-key=password123"
+    ]
+    environment:
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=password123
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v2/health/live"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 45s
+    depends_on:
+      storage-init:
+        condition: service_completed_successfully
+    networks:
+      - app-network
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: text-codegen-api
+    environment:
+      - MODEL_NAME=codegen
+      - TRITON_HOST=triton-server
+      - TRITON_PORT=8001
+    ports:
+      - "8080:80"
+    depends_on:
+      triton-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 25s
+      timeout: 12s
+      retries: 4
+      start_period: 50s
+    networks:
+      - app-network
+
+volumes:
+  minio_data:
+
+networks:
+  app-network:
+    driver: bridge
